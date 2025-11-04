@@ -28,8 +28,9 @@ export async function runLLM({ system, user, context }){
 
   // Haremos hasta 3 iteraciones de herramientas si Anthropic las pide
   for (let i=0; i<3; i++){
+    const model = process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022'; // o 'claude-3-5-sonnet-20241022'
     const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-latest',
+      model,
       max_tokens: 800,
       system,
       messages,
