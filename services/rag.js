@@ -2,7 +2,8 @@
 import Database from 'better-sqlite3';
 import { pipeline } from '@xenova/transformers';
 
-const db = new Database('./rag.db');
+const DB_PATH = process.env.RAG_DB_PATH || './rag.db';
+const db = new Database(DB_PATH);
 db.exec(`
 CREATE TABLE IF NOT EXISTS docs (
   id TEXT PRIMARY KEY,

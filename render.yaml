@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: ia-agent-api
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm ci
+    startCommand: node app.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: API_TOKEN
+        sync: false            # lo pondrás como Secret en el panel
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PORT
+        value: 3000
+      - key: TRANSFORMERS_CACHE
+        value: /var/cache/transformers
+      - key: RAG_DB_PATH
+        value: /var/data/rag.db
+    disks:
+      - name: data
+        mountPath: /var/data
+        sizeGB: 1
+      - name: cache
+        mountPath: /var/cache
+        sizeGB: 1
