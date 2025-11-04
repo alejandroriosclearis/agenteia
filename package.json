@@ -9,7 +9,7 @@
     "test": "echo \"No tests\" && exit 0"
   },
   "dependencies": {
-    "anthropic": "latest",
+    "@anthropic-ai/sdk": "^0.23.0",
     "@xenova/transformers": "2.5.3",
     "better-sqlite3": "^9.4.3",
     "body-parser": "^1.20.3",

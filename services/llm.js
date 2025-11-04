@@ -1,4 +1,4 @@
-import Anthropic from 'anthropic';
+import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { toolSpecs, toolHandlers } from './tools.js';
 
