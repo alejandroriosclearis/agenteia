@@ -1,3 +1,4 @@
+// services/llm.js
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { toolSpecs, toolHandlers } from './tools.js';
@@ -12,23 +13,34 @@ const OutSchema = z.object({
   metadata: z.record(z.any()).optional()
 });
 
-export async function runLLM({ system, user, context }){
+export async function runLLM({ system, user, context }) {
+  const model = process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022';
+
   const ctx = JSON.stringify({
     customer: context.customer,
     order: context.order && {
-      reference: context.order.reference, status: context.order.status,
-      carrier: context.order.carrier, currency: context.order.currency, total: context.order.total_paid
+      reference: context.order.reference,
+      status: context.order.status,
+      carrier: context.order.carrier,
+      currency: context.order.currency,
+      total: context.order.total_paid
     },
     shop: context.shop
   });
 
-  let messages = [
-    { role: 'user', content: `Mensaje del cliente: ${user}\n\nCTX:\n${ctx}` }
+  // Mensaje inicial
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: `Mensaje del cliente: ${user}` },
+        { type: 'text', text: `CTX:\n${ctx}` }
+      ]
+    }
   ];
 
-  // Haremos hasta 3 iteraciones de herramientas si Anthropic las pide
-  for (let i=0; i<3; i++){
-    const model = process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022'; // o 'claude-3-5-sonnet-20241022'
+  // Hasta 3 rondas de tools
+  for (let i = 0; i < 3; i++) {
     const response = await client.messages.create({
       model,
       max_tokens: 800,
@@ -37,17 +49,19 @@ export async function runLLM({ system, user, context }){
       tools: toolSpecs
     });
 
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+    // ¿Pidió herramientas?
+    const toolUses = response.content.filter(b => b.type === 'tool_use');
     const textBlocks = response.content.filter(b => b.type === 'text');
 
-    // Si el modelo devolvió contenido final en texto (JSON), intentamos parsear
-    if (!toolUseBlocks.length && textBlocks.length){
-      const raw = textBlocks.map(t => t.text).join('\n');
-      try { return OutSchema.parse(JSON.parse(raw)); }
-      catch { 
-        // Fallback: envolver en JSON mínimo
+    // Si no hay tool_use: intentamos parsear la salida final (texto -> JSON)
+    if (toolUses.length === 0) {
+      const raw = textBlocks.map(t => t.text).join('\n').trim();
+      try {
+        return OutSchema.parse(JSON.parse(raw));
+      } catch {
+        // fallback a draft si no es JSON válido
         return OutSchema.parse({
-          reply: raw.slice(0,1000),
+          reply: raw || 'Gracias por escribirnos. Estoy recopilando los datos para darte una respuesta precisa.',
           confidence: 0.6,
           action: 'draft',
           tags: ['general'],
@@ -56,21 +70,33 @@ export async function runLLM({ system, user, context }){
       }
     }
 
-    // Si hay tools, ejecútalas y añade tool_result(s)
-    for (const t of toolUseBlocks){
-      const handler = toolHandlers[t.name];
-      let result = { error: `tool ${t.name} not implemented` };
-      try { result = await handler(t.input || {}); } catch(e){ result = { error: e.message }; }
-      messages.push({ role: 'tool', content: [{ type:'tool_result', tool_use_id: t.id, content: JSON.stringify(result) }] });
+    // Ejecutar cada tool_use y construir un ÚNICO mensaje con role:'user' y bloques tool_result
+    const toolResultBlocks = [];
+    for (const tu of toolUses) {
+      const handler = toolHandlers[tu.name];
+      let result;
+      try {
+        result = handler ? await handler(tu.input || {}) : { error: `tool ${tu.name} not implemented` };
+      } catch (e) {
+        result = { error: String(e?.message || e) };
+      }
+      toolResultBlocks.push({
+        type: 'tool_result',
+        tool_use_id: tu.id,
+        content: JSON.stringify(result) // texto plano; también puedes pasar array de bloques si quieres
+      });
     }
 
-    // También pasamos cualquier texto intermedio para dar contexto
-    if (textBlocks.length){
+    // IMPORTANTE: añadir tool_result como role:'user'
+    messages.push({ role: 'user', content: toolResultBlocks });
+
+    // (Opcional) añade también cualquier texto intermedio del assistant como contexto
+    if (textBlocks.length) {
       messages.push({ role: 'assistant', content: textBlocks });
     }
   }
 
-  // Si no conseguimos JSON válido tras 3 rondas, devolvemos borrador
+  // Si no consiguió cerrar en 3 rondas
   return OutSchema.parse({
     reply: 'Gracias por escribirnos. Estoy recopilando los datos para darte una respuesta precisa.',
     confidence: 0.5,
