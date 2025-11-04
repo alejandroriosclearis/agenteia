@@ -49,17 +49,16 @@ export async function runLLM({ system, user, context }) {
       tools: toolSpecs
     });
 
-    // ¿Pidió herramientas?
+    // 1) ¿Pidió herramientas?
     const toolUses = response.content.filter(b => b.type === 'tool_use');
     const textBlocks = response.content.filter(b => b.type === 'text');
 
-    // Si no hay tool_use: intentamos parsear la salida final (texto -> JSON)
+    // 2) Si NO pidió tools → intentamos parsear salida final como JSON
     if (toolUses.length === 0) {
       const raw = textBlocks.map(t => t.text).join('\n').trim();
       try {
         return OutSchema.parse(JSON.parse(raw));
       } catch {
-        // fallback a draft si no es JSON válido
         return OutSchema.parse({
           reply: raw || 'Gracias por escribirnos. Estoy recopilando los datos para darte una respuesta precisa.',
           confidence: 0.6,
@@ -70,7 +69,10 @@ export async function runLLM({ system, user, context }) {
       }
     }
 
-    // Ejecutar cada tool_use y construir un ÚNICO mensaje con role:'user' y bloques tool_result
+    // 3) IMPORTANTE: Añadimos el mensaje COMPLETO del assistant que contiene los tool_use
+    messages.push({ role: 'assistant', content: response.content });
+
+    // 4) Ejecutamos tools y construimos UN mensaje user con los tool_result que referencian esos tool_use_id
     const toolResultBlocks = [];
     for (const tu of toolUses) {
       const handler = toolHandlers[tu.name];
@@ -82,18 +84,13 @@ export async function runLLM({ system, user, context }) {
       }
       toolResultBlocks.push({
         type: 'tool_result',
-        tool_use_id: tu.id,
-        content: JSON.stringify(result) // texto plano; también puedes pasar array de bloques si quieres
+        tool_use_id: tu.id,        // ← debe coincidir con el id del bloque tool_use anterior
+        content: JSON.stringify(result)
       });
     }
 
-    // IMPORTANTE: añadir tool_result como role:'user'
+    // 5) Añadimos el mensaje user con los tool_result; siguiente iteración
     messages.push({ role: 'user', content: toolResultBlocks });
-
-    // (Opcional) añade también cualquier texto intermedio del assistant como contexto
-    if (textBlocks.length) {
-      messages.push({ role: 'assistant', content: textBlocks });
-    }
   }
 
   // Si no consiguió cerrar en 3 rondas
